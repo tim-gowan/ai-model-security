@@ -85,7 +85,6 @@ def load_and_use_model(model_dir: str, prompt: str, device_name: str, torch_devi
     """
     print(f"Loading model from: {model_dir}")
     print(f"Using device: {device_name}")
-    print(f"Prompt: {prompt}")
     
     model = None
     try:
@@ -102,11 +101,37 @@ def load_and_use_model(model_dir: str, prompt: str, device_name: str, torch_devi
             # Show GPU memory before loading
             if torch.cuda.is_available():
                 print(f"GPU memory before loading: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated")
-            model = AutoModelForCausalLM.from_pretrained(
-                model_dir,
-                dtype=torch.float16,
-                device_map="auto"  # Automatically handles device placement
-            )
+            
+            # Check if GPU compute capability is supported
+            # RTX 5090 has sm_120, but PyTorch 2.6 only supports up to sm_90
+            try:
+                compute_capability = torch.cuda.get_device_capability(0)
+                print(f"GPU compute capability: {compute_capability[0]}.{compute_capability[1]}")
+                if compute_capability[0] > 9:  # sm_100+ (RTX 5090 is sm_120)
+                    print("Warning: GPU compute capability may not be fully supported by PyTorch 2.6")
+                    print("Trying GPU load - will fallback to CPU if it fails...")
+            except Exception as e:
+                print(f"Could not check compute capability: {e}")
+            
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_dir,
+                    dtype=torch.float16,
+                    device_map="auto"  # Automatically handles device placement
+                )
+            except RuntimeError as e:
+                if "no kernel image is available" in str(e) or "CUDA" in str(e):
+                    print(f"\nGPU load failed due to compute capability incompatibility: {e}")
+                    print("Falling back to CPU mode...")
+                    device_name = "cpu"
+                    model = AutoModelForCausalLM.from_pretrained(
+                        model_dir,
+                        dtype=torch.float32,
+                        device_map=None
+                    )
+                    model = model.to("cpu")
+                else:
+                    raise
             # Verify model is on GPU and show memory usage
             if torch.cuda.is_available():
                 print(f"GPU memory after loading: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated")
@@ -127,11 +152,13 @@ def load_and_use_model(model_dir: str, prompt: str, device_name: str, torch_devi
             if hasattr(model, 'device') and str(model.device) != 'cpu':
                 model = model.to("cpu")
         
+        print(f"\nPrompt: {prompt}")
         print("Generating response...")
         # Tokenize input
         inputs = tokenizer(prompt, return_tensors="pt")
         
         # Move inputs to the same device as the model
+        # Note: device_name may have been changed to "cpu" if GPU load failed
         if device_name == "cuda" and torch_device is not None:
             # If using device_map="auto", inputs go to the first device
             # Check model device placement
@@ -160,14 +187,34 @@ def load_and_use_model(model_dir: str, prompt: str, device_name: str, torch_devi
         
         # Generate
         print(f"Input device: {inputs['input_ids'].device}")
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9
-            )
+        try:
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9
+                )
+        except RuntimeError as e:
+            if "no kernel image is available" in str(e) or "CUDA" in str(e):
+                print(f"\nGPU generation failed due to compute capability incompatibility: {e}")
+                print("Falling back to CPU for generation...")
+                # Move model and inputs to CPU
+                if device_name == "cuda":
+                    model = model.to("cpu")
+                    inputs = {k: v.to("cpu") for k, v in inputs.items()}
+                    device_name = "cpu"
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=512,
+                        do_sample=True,
+                        temperature=0.7,
+                        top_p=0.9
+                    )
+            else:
+                raise
         # Check output device (outputs is a tensor)
         if isinstance(outputs, torch.Tensor):
             print(f"Output device: {outputs.device}")
