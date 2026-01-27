@@ -91,6 +91,5 @@ if __name__ == "__main__":
     for chunk in stream:
         full += chunk
     print("Command: " + str(full.content))
-    result = run_shell_command(str(full.content)) ## This is the Sink for Command Injection
-    print(result)
-    
+    result = run_shell_command(str(full.content)) ## This is the Sink for Command Injection - WARNING! YOU ARE RUNNING A COMMAND INJECTED BY AN LLM!
+    print(str(result.stdout))

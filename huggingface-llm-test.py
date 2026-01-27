@@ -30,7 +30,7 @@ def get_device():
         print("PyTorch not available, using CPU")
         return "cpu", None
 
-def download_model(model_name: str):
+def download_model(model_name: str) :
     """
     Download the model from Hugging Face.
     
