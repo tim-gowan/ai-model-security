@@ -5,7 +5,7 @@ description = "AI Model Security Benchmark - Test scripts for evaluating AI mode
 readme = "README.md"
 requires-python = ">=3.13.2"
 dependencies = [
-    "google-genai==1.49.0",
+    "google-genai==2.29.0",
     "openai==2.7.2",
     "huggingface_hub[hf_xet]==0.36.0",
     "transformers==4.57.1",
